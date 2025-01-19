@@ -69,6 +69,7 @@ export function RSSService() {
 export async function rssCrontab(env: Env) {
     const frontendUrl = `${env.FRONTEND_URL.startsWith("http://") || env.FRONTEND_URL.startsWith("https://") ? "" : "https://"}${env.FRONTEND_URL}`;
     const db = drizzle(env.DB, { schema: schema });
+    const accessHost = env.S3_ACCESS_HOST || env.S3_ENDPOINT;
     let title = env.RSS_TITLE;
     const description = env.RSS_DESCRIPTION || "Feed from Rin";
     if (!title) {
@@ -84,8 +85,9 @@ export async function rssCrontab(env: Env) {
         id: frontendUrl,
         link: frontendUrl,
         // WARN: 这里应该变为自定义上传的吧
-        image: `${frontendUrl}/favicon.png`,
-        favicon: `${frontendUrl}/favicon.png`,
+        // image: `${frontendUrl}/favicon.png`,
+        // WARN: HERE
+        favicon: `${accessHost}/favicon.webp`,
         copyright: "All rights reserved 2024",
         updated: new Date(), // optional, default = today
         generator: "Feed from Rin", // optional, default = 'Feed for Node.js'

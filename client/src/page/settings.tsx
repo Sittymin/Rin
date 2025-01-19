@@ -89,10 +89,19 @@ export function Settings() {
     }, []);
 
     // WARN: Here
-    function handleImageFileChange(e: ChangeEvent<HTMLInputElement>) {
+    async function handleFaviconChange(e: ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0];
         if (file) {
-            client.favicon
+            const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+            if (file.size > MAX_FILE_SIZE) {
+                showAlert(
+                    t("upload.failed$size", {
+                        size: MAX_FILE_SIZE / 1024 / 1024,
+                    }),
+                );
+                return;
+            }
+            await client.favicon
                 .post(
                     {
                         file: file,
@@ -103,13 +112,12 @@ export function Settings() {
                 )
                 .then(({ data }) => {
                     if (data && typeof data !== "string") {
-                        setMsg(t("update.success"));
-                        setIsOpen(true);
+                        showAlert(t("settings.favicon.update.success"));
                     }
                 })
                 .catch((err) => {
                     showAlert(
-                        t("update_failed$message", {
+                        t("settings.favicon.update.failed$message", {
                             message: err.message,
                         }),
                     );
@@ -117,10 +125,11 @@ export function Settings() {
         }
     }
 
-    function onFileChange(e: ChangeEvent<HTMLInputElement>) {
+    // WARN: HERE
+    async function onFileChange(e: ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0];
         if (file) {
-            client.wp
+            await client.wp
                 .post(
                     {
                         data: file,
@@ -228,7 +237,7 @@ export function Settings() {
                                 description={t("settings.favicon.desc")}
                                 // @see https://developers.cloudflare.com/images/transform-images/#supported-input-formats
                                 accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
-                                onFileChange={handleImageFileChange}
+                                onFileChange={handleFaviconChange}
                             />
                             {/* WARN: 看起来之前是缓存到配置中的 */}
                             {/* 
@@ -673,6 +682,7 @@ function ItemButton({
     );
 }
 
+// WARN: HERE
 function ItemWithUpload({
     title,
     description,
@@ -681,11 +691,22 @@ function ItemWithUpload({
 }: {
     title: string;
     description: string;
-    onFileChange: (e: ChangeEvent<HTMLInputElement>) => void;
+    onFileChange: (e: ChangeEvent<HTMLInputElement>) => Promise<void>;
     accept: string;
 }) {
     const inputRef = useRef<HTMLInputElement>(null);
+    const [loading, setLoading] = useState(false);
     const { t } = useTranslation();
+
+    const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+        setLoading(true);
+        try {
+            await onFileChange(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <div className="flex flex-col w-full items-start">
             <div className="flex flex-row justify-between w-full items-center">
@@ -693,19 +714,29 @@ function ItemWithUpload({
                     <p className="text-lg font-bold dark:text-white">{title}</p>
                     <p className="text-xs text-neutral-500">{description}</p>
                 </div>
-                <input
-                    ref={inputRef}
-                    type="file"
-                    className="hidden"
-                    accept={accept}
-                    onChange={onFileChange}
-                />
-                <Button
-                    onClick={() => {
-                        inputRef.current?.click();
-                    }}
-                    title={t("upload.title")}
-                />
+                <div className="flex flex-row items-center justify-center space-x-4">
+                    {loading && (
+                        <ReactLoading
+                            width="1em"
+                            height="1em"
+                            type="spin"
+                            color="#FC466B"
+                        />
+                    )}
+                    <input
+                        ref={inputRef}
+                        type="file"
+                        className="hidden"
+                        accept={accept}
+                        onChange={handleFileChange}
+                    />
+                    <Button
+                        onClick={() => {
+                            inputRef.current?.click();
+                        }}
+                        title={t("upload.title")}
+                    />
+                </div>
             </div>
         </div>
     );

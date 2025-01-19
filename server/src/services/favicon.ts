@@ -18,85 +18,116 @@ export function FaviconService() {
     const s3 = createS3Client();
     const bucket = env.S3_BUCKET;
     const accessHost = env.S3_ACCESS_HOST || env.S3_ENDPOINT;
+    const faviconKey = "favicon.webp";
 
-    return new Elysia({ aot: false }).use(setup()).post(
-        "/favicon",
-        async ({ request, set, body: { file }, admin }) => {
+    return new Elysia({ aot: false })
+        .use(setup())
+        .get("/favicon", async ({ set }) => {
             try {
-                if (!admin) {
-                    set.status = 403;
-                    return "Permission denied";
-                }
-
-                if (!ALLOWED_TYPES[file.type]) {
-                    return new Response("Disallowed file type", {
-                        status: 400,
-                    });
-                }
-                const originFaviconKey = path.join(
-                    env.S3_FOLDER || "",
-                    `originFavicon${ALLOWED_TYPES[file.type]}`,
+                const response = await fetch(
+                    new Request(`${accessHost}/${faviconKey}`),
                 );
-
-                await s3.send(
-                    new PutObjectCommand({
-                        Bucket: bucket,
-                        Key: originFaviconKey,
-                        Body: file,
-                    }),
-                );
-
-                const imageRequest = new Request(
-                    `${accessHost}/${originFaviconKey}`,
-                    {
-                        headers: request.headers,
-                    },
-                );
-
-                const response = await fetch(imageRequest, {
-                    cf: {
-                        image: {
-                            width: 144,
-                            height: 144,
-                            format: "webp",
-                            fit: "cover",
-                        },
-                    },
-                });
 
                 if (!response.ok) {
                     set.status = response.status;
                     return await response.text();
                 }
 
-                const arrayBuffer = await response.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
+                set.headers["Content-Type"] = "image/webp";
+                set.headers["Cache-Control"] = "public, max-age=31536000"; // 1 year
 
-                const faviconKey = "favicon.webp";
-                await s3.send(
-                    new PutObjectCommand({
-                        Bucket: bucket,
-                        Key: faviconKey,
-                        Body: buffer,
-                    }),
-                );
-
-                return {
-                    success: true,
-                    url: `${accessHost}/${faviconKey}`,
-                };
+                return await response.arrayBuffer();
             } catch (error) {
                 if (error instanceof Error) {
                     set.status = 500;
-                    console.error("Error processing favicon:", error);
-                    return `Error processing favicon: ${error.message}`;
+                    console.error("Error fetching favicon:", error);
+                    return `Error fetching favicon: ${error.message}`;
                 }
             }
-        },
-        {
-            body: t.Object({
-                file: t.File(),
-            }),
-        },
-    );
+        })
+        .post(
+            "/favicon",
+            async ({ request, set, body: { file }, admin }) => {
+                try {
+                    if (!admin) {
+                        set.status = 403;
+                        return "Permission denied";
+                    }
+
+                    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+                    if (file.size > MAX_FILE_SIZE) {
+                        set.status = 400;
+                        return `File size exceeds limit (${MAX_FILE_SIZE / 1024 / 1024}MB)`;
+                    }
+
+                    if (!ALLOWED_TYPES[file.type]) {
+                        return new Response("Disallowed file type", {
+                            status: 400,
+                        });
+                    }
+                    const originFaviconKey = path.join(
+                        env.S3_FOLDER || "",
+                        `originFavicon${ALLOWED_TYPES[file.type]}`,
+                    );
+
+                    await s3.send(
+                        new PutObjectCommand({
+                            Bucket: bucket,
+                            Key: originFaviconKey,
+                            Body: file,
+                        }),
+                    );
+
+                    const imageRequest = new Request(
+                        `${accessHost}/${originFaviconKey}`,
+                        {
+                            headers: request.headers,
+                        },
+                    );
+
+                    const response = await fetch(imageRequest, {
+                        cf: {
+                            image: {
+                                width: 144,
+                                height: 144,
+                                fit: "cover",
+                                format: "webp",
+                                quality: 100,
+                            },
+                        },
+                    });
+
+                    if (!response.ok) {
+                        set.status = response.status;
+                        return await response.text();
+                    }
+
+                    const arrayBuffer = await response.arrayBuffer();
+                    const buffer = Buffer.from(arrayBuffer);
+
+                    await s3.send(
+                        new PutObjectCommand({
+                            Bucket: bucket,
+                            Key: faviconKey,
+                            Body: buffer,
+                        }),
+                    );
+
+                    return {
+                        url: `${accessHost}/${faviconKey}`,
+                    };
+                } catch (error) {
+                    if (error instanceof Error) {
+                        set.status = 500;
+                        console.error("Error processing favicon:", error);
+                        return `Error processing favicon: ${error.message}`;
+                    }
+                }
+            },
+            {
+                body: t.Object({
+                    file: t.File(),
+                }),
+            },
+        );
 }
