@@ -1,7 +1,7 @@
 import Elysia, { t } from "elysia";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-// import type { Env } from "../db/db";
 import { getEnv } from "../utils/di";
+import { setup } from "../setup";
 import { createS3Client } from "../utils/s3";
 import path from "path";
 
@@ -19,10 +19,15 @@ export function FaviconService() {
     const bucket = env.S3_BUCKET;
     const accessHost = env.S3_ACCESS_HOST || env.S3_ENDPOINT;
 
-    return new Elysia({ aot: false }).post(
+    return new Elysia({ aot: false }).use(setup()).post(
         "/favicon",
-        async ({ request, set, body: { file } }) => {
+        async ({ request, set, body: { file }, admin }) => {
             try {
+                if (!admin) {
+                    set.status = 403;
+                    return "Permission denied";
+                }
+
                 if (!ALLOWED_TYPES[file.type]) {
                     return new Response("Disallowed file type", {
                         status: 400,
@@ -76,7 +81,10 @@ export function FaviconService() {
                     }),
                 );
 
-                return `${accessHost}/${faviconKey}`;
+                return {
+                    success: true,
+                    url: `${accessHost}/${faviconKey}`,
+                };
             } catch (error) {
                 if (error instanceof Error) {
                     set.status = 500;
