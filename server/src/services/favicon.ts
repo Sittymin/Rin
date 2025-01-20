@@ -6,7 +6,7 @@ import { createS3Client } from "../utils/s3";
 import path from "path";
 
 // @see https://developers.cloudflare.com/images/url-format#supported-formats-and-limitations
-const ALLOWED_TYPES: { [key: string]: string } = {
+export const FAVICON_ALLOWED_TYPES: { [key: string]: string } = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/gif": ".gif",
@@ -18,7 +18,7 @@ export function FaviconService() {
     const s3 = createS3Client();
     const bucket = env.S3_BUCKET;
     const accessHost = env.S3_ACCESS_HOST || env.S3_ENDPOINT;
-    const faviconKey = "favicon.webp";
+    const faviconKey = path.join(env.S3_FOLDER || "", "favicon.webp");
 
     return new Elysia({ aot: false })
         .use(setup())
@@ -45,6 +45,39 @@ export function FaviconService() {
                 }
             }
         })
+        .get("/favicon/original", async ({ set }) => {
+            try {
+                let originFaviconKey = null;
+                for (const [mimeType, ext] of Object.entries(
+                    FAVICON_ALLOWED_TYPES,
+                )) {
+                    originFaviconKey = path.join(
+                        env.S3_FOLDER || "",
+                        `originFavicon${ext}`,
+                    );
+                    const response = await fetch(
+                        new Request(`${accessHost}/${originFaviconKey}`),
+                    );
+
+                    if (response.ok) {
+                        set.headers["Content-Type"] = mimeType;
+                        set.headers["Cache-Control"] =
+                            "public, max-age=31536000"; // 1 year
+
+                        return await response.arrayBuffer();
+                    }
+                }
+
+                set.status = 404;
+                return "Original favicon not found";
+            } catch (error) {
+                if (error instanceof Error) {
+                    set.status = 500;
+                    console.error("Error fetching original favicon:", error);
+                    return `Error fetching original favicon: ${error.message}`;
+                }
+            }
+        })
         .post(
             "/favicon",
             async ({ request, set, body: { file }, admin }) => {
@@ -60,14 +93,14 @@ export function FaviconService() {
                         return `File size exceeds limit (${MAX_FILE_SIZE / 1024 / 1024}MB)`;
                     }
 
-                    if (!ALLOWED_TYPES[file.type]) {
+                    if (!FAVICON_ALLOWED_TYPES[file.type]) {
                         return new Response("Disallowed file type", {
                             status: 400,
                         });
                     }
                     const originFaviconKey = path.join(
                         env.S3_FOLDER || "",
-                        `originFavicon${ALLOWED_TYPES[file.type]}`,
+                        `originFavicon${FAVICON_ALLOWED_TYPES[file.type]}`,
                     );
 
                     await s3.send(

@@ -13,6 +13,7 @@ import type { Env } from "../db/db";
 import * as schema from "../db/schema";
 import { feeds, users } from "../db/schema";
 import { getEnv } from "../utils/di";
+import { FAVICON_ALLOWED_TYPES } from "./favicon";
 import { extractImage } from "../utils/image";
 import { createS3Client } from "../utils/s3";
 
@@ -70,33 +71,62 @@ export async function rssCrontab(env: Env) {
     const frontendUrl = `${env.FRONTEND_URL.startsWith("http://") || env.FRONTEND_URL.startsWith("https://") ? "" : "https://"}${env.FRONTEND_URL}`;
     const db = drizzle(env.DB, { schema: schema });
     const accessHost = env.S3_ACCESS_HOST || env.S3_ENDPOINT;
-    let title = env.RSS_TITLE;
-    const description = env.RSS_DESCRIPTION || "Feed from Rin";
-    if (!title) {
-        const user = await db.query.users.findFirst({ where: eq(users.id, 1) });
-        if (!user) {
-            return;
-        }
-        title = user.username;
-    }
-    const feed = new Feed({
-        title: title,
-        description: description,
+
+    let feedConfig: any = {
+        title: env.RSS_TITLE,
+        description: env.RSS_DESCRIPTION || "Feed from Rin",
         id: frontendUrl,
         link: frontendUrl,
-        // WARN: 这里应该变为自定义上传的吧
-        // image: `${frontendUrl}/favicon.png`,
-        // WARN: HERE
-        favicon: `${accessHost}/favicon.webp`,
         copyright: "All rights reserved 2024",
-        updated: new Date(), // optional, default = today
-        generator: "Feed from Rin", // optional, default = 'Feed for Node.js'
+        updated: new Date(),
+        generator: "Feed from Rin",
         feedLinks: {
             rss: `${frontendUrl}/sub/rss.xml`,
             json: `${frontendUrl}/sub/rss.json`,
             atom: `${frontendUrl}/sub/atom.xml`,
         },
-    });
+    };
+
+    if (!feedConfig.title) {
+        const user = await db.query.users.findFirst({ where: eq(users.id, 1) });
+        if (user) {
+            feedConfig.title = user.username;
+        }
+    }
+
+    for (const [_mimeType, ext] of Object.entries(FAVICON_ALLOWED_TYPES)) {
+        const originFaviconKey = path.join(
+            env.S3_FOLDER || "",
+            `originFavicon${ext}`,
+        );
+        try {
+            const response = await fetch(
+                new Request(`${accessHost}/${originFaviconKey}`),
+            );
+            if (response.ok) {
+                feedConfig.image = `${accessHost}/${originFaviconKey}`;
+                break;
+            }
+        } catch (error) {
+            continue;
+        }
+    }
+
+    const faviconKey = path.join(env.S3_FOLDER || "", "favicon.webp");
+    try {
+        const response = await fetch(
+            new Request(`${accessHost}/${faviconKey}`),
+        );
+        if (response.ok) {
+            feedConfig.favicon = `${accessHost}/${faviconKey}`;
+            if (!feedConfig.image) {
+                feedConfig.image = feedConfig.favicon;
+            }
+        }
+    } catch (error) {}
+
+    const feed = new Feed(feedConfig);
+
     const feed_list = await db.query.feeds.findMany({
         where: and(eq(feeds.draft, 0), eq(feeds.listed, 1)),
         orderBy: [desc(feeds.createdAt), desc(feeds.updatedAt)],
@@ -129,8 +159,8 @@ export async function rssCrontab(env: Env) {
                       : content,
             content: contentHtml,
             author: [{ name: user.username }],
-            // NOTE: 只使用文章的图片
-            image: extractImage(content),
+            // WARN: 只使用文章的图片
+            // image: extractImage(content),
         });
     }
     // save rss.xml to s3
